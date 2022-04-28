@@ -145,7 +145,7 @@ function xmldb_ratingallocate_upgrade($oldversion) {
         upgrade_mod_savepoint(true, 2021062900, 'ratingallocate');
     }
 
-    if ($oldversion < 2021062901) {
+    if ($oldversion < 2022042801) {
 
         // Define table ratingallocate_group_choices to be created.
         $table = new xmldb_table('ratingallocate_group_choices');
@@ -175,7 +175,7 @@ function xmldb_ratingallocate_upgrade($oldversion) {
         }
 
         // Ratingallocate savepoint reached.
-        upgrade_mod_savepoint(true, 2021062901, 'ratingallocate');
+        upgrade_mod_savepoint(true, 2022042801, 'ratingallocate');
     }
 
     return true;
