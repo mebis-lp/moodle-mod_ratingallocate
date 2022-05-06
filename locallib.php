@@ -87,6 +87,8 @@ define('ACTION_DISABLE_CHOICE', 'disable_choice');
 define('ACTION_DELETE_CHOICE', 'delete_choice');
 define('ACTION_START_DISTRIBUTION', 'start_distribution');
 define('ACTION_MANUAL_ALLOCATION', 'manual_allocation');
+define('ACTION_DISTRIBUTE_UNALLOCATED_FILL', 'distribute_unallocated_fill');
+define('ACTION_DISTRIBUTE_UNALLOCATED_EQUALLY', 'distribute_unallocated_equally');
 define('ACTION_PUBLISH_ALLOCATIONS', 'publish_allocations'); // Make them displayable for the users.
 define('ACTION_SOLVE_LP_SOLVE', 'solve_lp_solve'); // Instead of only generating the mps-file, let it solve.
 define('ACTION_SHOW_RATINGS_AND_ALLOCATION_TABLE', 'show_ratings_and_allocation_table');
@@ -621,6 +623,149 @@ class ratingallocate {
         return $output;
     }
 
+    public function distribute_users_without_choice(string $distributionalgorithm): void {
+        /*print_r($this->get_ratings_for_rateable_choices());
+        print_r("<br>BLAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA<br>");
+        print_r($this->get_rateable_choices());
+        print_r("<br>BLAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA<br>");
+        print_r($this->get_allocations());
+        print_r("<br>BLAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA<br>");*/
+        //print_r($this->get_raters_in_course());
+        //print_r("<br>BLAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA<br>");
+        $placesleft = [];
+
+        //TODO Test code, wieder entfernen:
+        /*$this->clear_all_allocations();
+        $this->add_allocation(4,3);
+        $this->add_allocation(8, 4);*/
+
+        foreach ($this->get_rateable_choices() as $choice) {
+            $placesleft[$choice->id] = $choice->maxsize -
+                count(array_filter($this->get_allocations(), fn($allocation) => $allocation->choiceid === $choice->id));
+        }
+        $undistributeduserids = array_map(fn($user) => $user->id, array_values(array_filter($this->get_raters_in_course(), fn($user) =>
+            !in_array($user->id, array_keys($this->get_allocations())))));
+
+        $transaction = $this->db->start_delegated_transaction();
+
+        switch ($distributionalgorithm) {
+            case ACTION_DISTRIBUTE_UNALLOCATED_EQUALLY:
+                $possibleusers = [];
+                foreach ($this->get_rateable_choices() as $currentchoice) {
+                    $usersforcurrentchoice = $this->filter_userids_who_can_rate_choice($undistributeduserids, $currentchoice->id);
+                    $possibleusers[$currentchoice->id] = $usersforcurrentchoice;
+                }
+
+                // We are assigning as long as for each choice we have
+                // - users allocatable to the choice
+                // - places available for this choice
+                while (!empty(array_filter(array_keys($placesleft),
+                        fn($choiceid) => $placesleft[$choiceid] > 0 && count($possibleusers[$choiceid]) > 0))) {
+                    // We now determine the choice with the most places left.
+                    $placesleftmax = max($placesleft);
+                    while ($placesleftmax === 0) {
+                        $choiceidtounset = array_search(0, $placesleft);
+                        unset($placesleft[$choiceidtounset]);
+                        unset($possibleusers[$choiceidtounset]);
+                        $placesleftmax = max($placesleft);
+                    }
+                    // That is the choice with the most places left.
+                    $choicetoassign = array_search($placesleftmax, $placesleft);
+
+                    if (count($possibleusers[$choicetoassign]) > 0) {
+                        $usertoallocate = array_shift($possibleusers[$choicetoassign]);
+
+                        $this->add_allocation($choicetoassign, $usertoallocate);
+                        foreach ($possibleusers as &$users) {
+                            $userindex = array_search($usertoallocate, $users);
+                            if ($userindex !== false) {
+                                unset($users[$userindex]);
+                            }
+                        }
+                        $placesleft[$choicetoassign] = $placesleft[$choicetoassign] - 1;
+                    } else {
+                        // If there are no users possible to assign, we can remove the choice from our iteration.
+                        unset($placesleft[$choicetoassign]);
+                        unset($possibleusers[$choicetoassign]);
+                    }
+                }
+                break;
+            case ACTION_DISTRIBUTE_UNALLOCATED_FILL:
+            default:
+                // We need our own copy of this array, because we want to manipulate it.
+                $placesleftcopy = $placesleft;
+                $choicessortedbygroupcount = [];
+                foreach ($this->get_rateable_choices() as $choice) {
+                    // At first only take choices with groups defined.
+                    $groupcount = count($this->get_choice_groups($choice->id));
+                    if ($choice->usegroups && $groupcount > 0) {
+                        $choicessortedbygroupcount[$choice->id] = $groupcount;
+                        unset($placesleftcopy[array_search($choice->id, $placesleftcopy)]);
+                    }
+                }
+                asort($choicessortedbygroupcount);
+                asort($placesleftcopy);
+                // Then we also add choices without group restriction, sorted by places left.
+                foreach ($placesleftcopy as $choiceid => $placescount) {
+                    $choicessortedbygroupcount[$choiceid] = $placescount;
+                }
+
+                foreach (array_keys($choicessortedbygroupcount) as $choiceid) {
+                    // We now handle the choice with the least count of groups first.
+                    // First get all users which can rate the current choice.
+                    $possibleusers = $this->filter_userids_who_can_rate_choice($undistributeduserids, $choiceid);
+
+                    while($placesleft[$choiceid] > 0) {
+                        $nextuser = array_shift($possibleusers);
+                        if (!$nextuser) {
+                            continue 2;
+                        }
+                        $this->add_allocation($choiceid, $nextuser);
+                        $placesleft[$choiceid] = $placesleft[$choiceid] - 1;
+                        unset($undistributeduserids[array_search($nextuser, $undistributeduserids)]);
+                    }
+                }
+            }
+        $transaction->allow_commit();
+    }
+
+    /**
+     * Helper function to retrieve all users who can rate the given choice due to group restrictions.
+     *
+     * This function sorts the users dependent on the fact how many groups they are member in. Users with less groups
+     * than others come first.
+     *
+     * @param int $choiceid
+     * @return array $users array of users, sorted from 'has less groups' to 'has more groups'
+     */
+    private function filter_userids_who_can_rate_choice(array $userids, int $choiceid): array {
+        $choicesfiltered = array_filter($this->get_rateable_choices(), fn($choice) => $choice->id == $choiceid);
+        if (empty($choicesfiltered)) {
+            // We could not find the choice with the given id.
+            return [];
+        }
+        $choice = array_values($choicesfiltered)[0];
+
+        // If we have a choice without group mode, return all possible users.
+        if (!$choice->usegroups) {
+            return $userids;
+        }
+        // If we have a choice with group mode, but without any specified groups, no user can be distributed to this choice.
+        if (empty($this->get_choice_groups($choice->id))) {
+            return [];
+        }
+
+        // In all other cases: Filter users by their groups.
+        $filtereduserids = array_filter($userids,
+            fn($userid) => in_array($choiceid,
+                array_map(fn($choice) => $choice->id,
+                    $this->filter_choices_by_groups($this->get_rateable_choices(), $userid))));
+        usort($filtereduserids, fn($a, $b) =>
+                count($this->filter_choices_by_groups($this->get_rateable_choices(), $a))
+                    > count($this->filter_choices_by_groups($this->get_rateable_choices(), $b)) ? 1 : -1);
+        return $filtereduserids;
+    }
+
     private function process_action_show_ratings_and_alloc_table() {
         $output = '';
         // Print ratings table.
@@ -833,6 +978,15 @@ class ratingallocate {
 
             case ACTION_MANUAL_ALLOCATION:
                 $output .= $this->process_action_manual_allocation();
+                break;
+
+            case ACTION_DISTRIBUTE_UNALLOCATED_EQUALLY || ACTION_DISTRIBUTE_UNALLOCATED_FILL:
+                $this->distribute_users_without_choice($action);
+                redirect(new moodle_url('/mod/ratingallocate/view.php',
+                            ['id' => $this->coursemodule->id, 'action' => ACTION_NONE]),
+                    get_string('unassigned_users_assigned', ratingallocate_MOD_NAME),
+                    null,
+                    \core\output\notification::NOTIFY_SUCCESS);
                 break;
 
             case ACTION_SHOW_RATINGS_AND_ALLOCATION_TABLE:
