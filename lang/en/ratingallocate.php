@@ -81,6 +81,17 @@ Only users who rated at least one choice and who are not allocated yet are liste
 $string['allocation_manual_explain_all'] = 'Select a choice to be assigned to a user.';
 $string['distribution_algorithm'] = 'Distribution Algorithm';
 $string['distribution_saved'] = 'Distribution saved (in {$a}s).';
+$string['distributeequally'] = 'Distribute unallocated users equally';
+$string['distributefill'] = 'Distribute unallocated users by filling up';
+$string['distribution_description_help'] = 'You can choose between two different algorithms to distribute currently unallocated users.<br/>'
+    . '<i>Distribute equally:</i> Users are being distributed equally across the choices regarding the maximum of each choice.<br/>'
+    . '<i>Fill up choices:</i> Every choice is being filled up with users first before filling up the next choice. Choices with '
+    . 'least places left are filled up first.<br/><br/>'
+    . 'Group restrictions will be respected.';
+$string['distribute_unallocated_fill_confirm'] = 'All currently unallocated users will be distributed to the choices. '
+    . 'Each choice will be filled up to its maximum before assigning users to the next choice.';
+$string['distribute_unallocated_equally_confirm'] = 'All currently unallocated users will be distributed to the choices. '
+    . 'The choices will be filled up equally, so all of them have about the same amount of places left.';
 $string['no_user_to_allocate'] = 'There is no user you could allocate';
 $string['ratings_table'] = 'Ratings and Allocations';
 $string['ratings_table_sum_allocations'] = 'Number of allocations / Maximum';
@@ -102,6 +113,7 @@ $string['algorithm_now_scheduled_for_cron'] = 'The allocation algorithm run has 
 $string['start_distribution'] = 'Run Allocation Algorithm';
 $string['confirm_start_distribution'] = 'Running the algorithm will delete all existing allocations, if any. Are you sure to continue?';
 $string['unassigned_users'] = 'Unassigned Users';
+$string['unassigned_users_assigned'] = 'Unassigned users have been assigned as good as possible.';
 $string['invalid_dates'] = 'Dates are invalid. Starting date must be before ending date.';
 $string['invalid_publishdate'] = 'Publication date is invalid. Publication date must be after the end of rating.';
 $string['rated'] = 'rated {$a}';
