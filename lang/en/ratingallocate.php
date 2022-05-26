@@ -38,6 +38,7 @@ $string['pluginname'] = 'Fair Allocation';
 $string['groupingname'] = 'Created from Fair Allocation "{$a}"';
 $string['ratingallocate:addinstance'] = 'Add new instance of Fair Allocation';
 $string['ratingallocate:view'] = 'View instances of Fair Allocation';
+$string['ratingallocate:distribute_unallocated'] = 'Ability to distribute unallocated users automatically';
 $string['ratingallocate:give_rating'] = 'Create or edit choice';
 $string['ratingallocate:start_distribution'] = 'Start allocation of users to choices';
 $string['ratingallocate:export_ratings'] = 'Ability to export the user ratings';
@@ -83,6 +84,7 @@ $string['distribution_algorithm'] = 'Distribution Algorithm';
 $string['distribution_saved'] = 'Distribution saved (in {$a}s).';
 $string['distributeequally'] = 'Distribute unallocated users equally';
 $string['distributefill'] = 'Distribute unallocated users by filling up';
+$string['distribution_description'] = 'Distribution of unallocated users';
 $string['distribution_description_help'] = 'You can choose between two different algorithms to distribute currently unallocated users.<br/>'
     . '<i>Distribute equally:</i> Users are being distributed equally across the choices regarding the maximum of each choice.<br/>'
     . '<i>Fill up choices:</i> Every choice is being filled up with users first before filling up the next choice. Choices with '
