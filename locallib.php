@@ -624,20 +624,6 @@ class ratingallocate {
     }
 
     public function distribute_users_without_choice(string $distributionalgorithm): void {
-        /*print_r($this->get_ratings_for_rateable_choices());
-        print_r("<br>BLAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA<br>");
-        print_r($this->get_rateable_choices());
-        print_r("<br>BLAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA<br>");
-        print_r($this->get_allocations());
-        print_r("<br>BLAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA<br>");*/
-        //print_r($this->get_raters_in_course());
-        //print_r("<br>BLAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA<br>");
-        $placesleft = [];
-
-        //TODO Test code, wieder entfernen:
-        /*$this->clear_all_allocations();
-        $this->add_allocation(4,3);
-        $this->add_allocation(8, 4);*/
 
         foreach ($this->get_rateable_choices() as $choice) {
             $placesleft[$choice->id] = $choice->maxsize -
