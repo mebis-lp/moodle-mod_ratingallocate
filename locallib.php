@@ -625,6 +625,7 @@ class ratingallocate {
 
     public function distribute_users_without_choice(string $distributionalgorithm): void {
 
+        $placesleft = [];
         foreach ($this->get_rateable_choices() as $choice) {
             $placesleft[$choice->id] = $choice->maxsize -
                 count(array_filter($this->get_allocations(), fn($allocation) => $allocation->choiceid === $choice->id));
@@ -966,7 +967,8 @@ class ratingallocate {
                 $output .= $this->process_action_manual_allocation();
                 break;
 
-            case ACTION_DISTRIBUTE_UNALLOCATED_EQUALLY || ACTION_DISTRIBUTE_UNALLOCATED_FILL:
+            case ACTION_DISTRIBUTE_UNALLOCATED_EQUALLY:
+            case ACTION_DISTRIBUTE_UNALLOCATED_FILL:
                 $this->distribute_users_without_choice($action);
                 redirect(new moodle_url('/mod/ratingallocate/view.php',
                             ['id' => $this->coursemodule->id, 'action' => ACTION_NONE]),
