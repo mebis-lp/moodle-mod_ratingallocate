@@ -130,9 +130,9 @@ class mod_ratingallocate_choice_importer_testcase extends advanced_testcase {
 
         $contents = $this->get_choice_lines(false);
         // Some new groups of groups, some with questionable whitespace and empty values in group names.
-        $contents[] = 'New Test Choice 6,Explain New Choice 6, 100, 1," Blue Group, Green Group"';
-        $contents[] = 'New Test Choice 7,Explain New Choice 7, 100, 1,"Blue Group,Green Group,Red Group "';
-        $contents[] = 'New Test Choice 8,Explain New Choice 8, 100, 1,"Green Group,Red Group,, "';
+        $contents[] = 'New Test Choice 6,Explain New Choice 6, 100, 1," Blue Group; Green Group"';
+        $contents[] = 'New Test Choice 7,Explain New Choice 7, 100, 1,"Blue Group;Green Group;Red Group "';
+        $contents[] = 'New Test Choice 8,Explain New Choice 8, 100, 1,"Green Group;Red Group;; "';
         $csv = join("\n", $contents) . "\n";
         $importstatus = $choiceimporter->import($csv);
         $this->assertEquals($importstatus->status, \mod_ratingallocate\choice_importer::IMPORT_STATUS_OK);
