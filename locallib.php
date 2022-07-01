@@ -744,9 +744,16 @@ class ratingallocate {
 
         // In all other cases: Filter users by their groups.
         $filtereduserids = array_filter($userids,
-            fn($userid) => in_array($choiceid,
-                array_map(fn($choice) => $choice->id,
-                    $this->filter_choices_by_groups($this->get_rateable_choices(), $userid))));
+            function($userid) use ($choiceid) {
+                $isselectable = false;
+                foreach ($this->get_choice_groups($choiceid) as $group) {
+                    if (groups_is_member($group->id, $userid)) {
+                        $isselectable = true;
+                        break;
+                    }
+                }
+                return $isselectable;
+            });
         usort($filtereduserids, fn($a, $b) =>
                 count($this->filter_choices_by_groups($this->get_rateable_choices(), $a))
                     > count($this->filter_choices_by_groups($this->get_rateable_choices(), $b)) ? 1 : -1);
