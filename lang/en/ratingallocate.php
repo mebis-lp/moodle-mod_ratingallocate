@@ -38,6 +38,7 @@ $string['pluginname'] = 'Fair Allocation';
 $string['groupingname'] = 'Created from Fair Allocation "{$a}"';
 $string['ratingallocate:addinstance'] = 'Add new instance of Fair Allocation';
 $string['ratingallocate:view'] = 'View instances of Fair Allocation';
+$string['ratingallocate:distribute_unallocated'] = 'Ability to distribute unallocated users automatically';
 $string['ratingallocate:give_rating'] = 'Create or edit choice';
 $string['ratingallocate:start_distribution'] = 'Start allocation of users to choices';
 $string['ratingallocate:export_ratings'] = 'Ability to export the user ratings';
@@ -46,6 +47,8 @@ $string['crontask'] = 'Automated allocation for Fair Allocation';
 $string['algorithmtimeout'] = 'Algorithm timeout';
 $string['configalgorithmtimeout'] = 'The time in seconds after which the algorithm is assumed to be stuck.
 The current run is terminated and marked as failed.';
+$string['algorithmforcebackground'] = 'Force calculation as background task';
+$string['configalgorithmforcebackground'] = 'Even if triggered manually by the user the distribution will always be calculated in the background.';
 $string['downloaduserfields'] = 'Additional user fields for download';
 $string['configdownloaduserfields'] = 'When downloading a table with users in it, these fields may be shown in addition to the users\' first and last name.';
 $string['userid'] = 'User ID';
@@ -79,6 +82,18 @@ Only users who rated at least one choice and who are not allocated yet are liste
 $string['allocation_manual_explain_all'] = 'Select a choice to be assigned to a user.';
 $string['distribution_algorithm'] = 'Distribution Algorithm';
 $string['distribution_saved'] = 'Distribution saved (in {$a}s).';
+$string['distributeequally'] = 'Distribute unallocated users equally';
+$string['distributefill'] = 'Distribute unallocated users by filling up';
+$string['distribution_description'] = 'Distribution of unallocated users';
+$string['distribution_description_help'] = 'You can choose between two different algorithms to distribute currently unallocated users.<br/>'
+    . '<i>Distribute equally:</i> Users are being distributed equally across the choices regarding the maximum of each choice.<br/>'
+    . '<i>Fill up choices:</i> Every choice is being filled up with users first before filling up the next choice. Choices with '
+    . 'least places left are filled up first.<br/><br/>'
+    . 'Group restrictions will be respected.';
+$string['distribute_unallocated_fill_confirm'] = 'All currently unallocated users will be distributed to the choices. '
+    . 'Each choice will be filled up to its maximum before assigning users to the next choice.';
+$string['distribute_unallocated_equally_confirm'] = 'All currently unallocated users will be distributed to the choices. '
+    . 'The choices will be filled up equally, so all of them have about the same amount of places left.';
 $string['no_user_to_allocate'] = 'There is no user you could allocate';
 $string['ratings_table'] = 'Ratings and Allocations';
 $string['ratings_table_sum_allocations'] = 'Number of allocations / Maximum';
@@ -94,11 +109,13 @@ $string['download_problem_mps_format'] = 'Download Equation (mps/txt)';
 $string['export_choice_text_suffix'] = ' - Text';
 $string['export_choice_alloc_suffix'] = ' - Allocation';
 $string['too_early_to_distribute'] = 'Too early to distribute. Rating is not over yet.';
-$string['algorithm_already_running']='Another instance of the allocation algorithm is already running. Please wait a few minutes and refresh the page.';
-$string['algorithm_scheduled_for_cron']='The allocation algorithm run is scheduled for immediate execution by the cron job. Please wait a few minutes and refresh the page.';
+$string['algorithm_already_running'] = 'Another instance of the allocation algorithm is already running. Please wait a few minutes and refresh the page.';
+$string['algorithm_scheduled_for_cron'] = 'The allocation algorithm run has already been scheduled for execution by the cron job. Please wait a few minutes and refresh the page.';
+$string['algorithm_now_scheduled_for_cron'] = 'The allocation algorithm run has now been scheduled for execution by the cron job. Please wait a few minutes and refresh the page.';
 $string['start_distribution'] = 'Run Allocation Algorithm';
 $string['confirm_start_distribution'] = 'Running the algorithm will delete all existing allocations, if any. Are you sure to continue?';
 $string['unassigned_users'] = 'Unassigned Users';
+$string['unassigned_users_assigned'] = 'Unassigned users have been assigned as good as possible.';
 $string['invalid_dates'] = 'Dates are invalid. Starting date must be before ending date.';
 $string['invalid_publishdate'] = 'Publication date is invalid. Publication date must be after the end of rating.';
 $string['rated'] = 'rated {$a}';
@@ -192,6 +209,23 @@ $string['saveandnext'] = 'Save and add next';
 $string['choice_added_notification'] = 'Choice saved.';
 
 // </editor-fold>
+// <editor-fold defaultstate="collapsed" desc="Form to upload choices via CSV (administrator)">
+$string['upload_choices'] = 'Upload choices via CSV';
+$string['upload_choices_required_fields'] = 'Required Fields';
+$string['upload_choices_fields_desc'] = 'CSV files uploaded through this form are expected to be UTF-8 encoded, and include the following choice fields:<br/><tt>{$a}</tt>';
+$string['csvempty'] = 'CSV file is empty.';
+$string['csvupload'] = 'Upload CSV';
+$string['csvupload_further_problems'] = '{$a} further problems found but not displayed.';
+$string['csvupload_explanation'] = 'Bulk upload choices via a CSV file';
+$string['csvupload_missing_fields'] = 'Columns missing from CSV import: {$a}';
+$string['csvupload_missing_groups'] = 'Line {$a->row}: group(s) not available in course: [{$a->invalidgroups}]';
+$string['csvupload_live_problems'] = 'Problems found in CSV import: {$a}';
+$string['csvupload_live_success'] = 'CSV import successful. {$a->importcount} choices imported.';
+$string['csvupload_test_problems'] = 'Problems found in CSV import test: {$a}';
+$string['csvupload_test_success'] = 'CSV import test successful. {$a->importcount} choices can be imported.';
+$string['csvupload_test_upload'] = 'Test upload';
+$string['csvupload_test_upload_help'] = 'When checked: test the uploaded CSV file for data problems, but do not commit to the database.';
+// </editor-fold>
 
 // <editor-fold defaultstate="collapsed" desc="Form to edit the instance(administrator)">
 $string['choice_active'] = 'Choice is active';
@@ -201,6 +235,9 @@ $string['choice_maxsize'] = 'Max. number of participants';
 $string['choice_maxsize_display'] = 'Maximum number of students';
 $string['choice_title'] = 'Title';
 $string['choice_title_help'] = 'Title of the choice. *Attention* all active choices will be displayed while ordered by title.';
+$string['choice_usegroups'] = 'Restrict visibility by groups';
+$string['choice_usegroups_help'] = 'If selected, this group will only be visible to the members of the specified groups.';
+$string['choice_groupselect'] = 'Groups';
 $string['edit_choice'] = 'Edit choice';
 $string['rating_endtime'] = 'Rating ends at';
 $string['rating_begintime'] = 'Rating begins at';
@@ -232,6 +269,7 @@ $string['choice_table_title'] = 'Title';
 $string['choice_table_explanation'] = 'Description';
 $string['choice_table_maxsize'] = 'Max. Size';
 $string['choice_table_active'] = 'Active';
+$string['choice_table_usegroups'] = 'Groups';
 $string['choice_table_tools'] = 'Edit';
 // </editor-fold>
 
@@ -274,9 +312,11 @@ $string['strategy_points_name'] = 'Give Points';
 $string['strategy_points_setting_maxzero'] = 'Maximum number of choices to which the user can give 0 points';
 $string['strategy_points_explain_distribute_points'] = 'Give points to each choice, you have a total of {$a} points to distribute. Prioritize the best choice by giving the most points.';
 $string['strategy_points_explain_max_zero'] = 'You may only assign 0 points to at most {$a} choice(s).';
+$string['strategy_points_explain_max_per_choice'] = 'You may at most assign {$a} points to a single choice.';
 $string['strategy_points_incorrect_totalpoints'] = 'Incorrect total number of points. The sum of all points has to be {$a}.';
 $string['strategy_points_setting_totalpoints'] = 'Total number of points the user can assign';
 $string['strategy_points_max_count_zero'] = 'You may give 0 points to at most {$a} choice(s).';
+$string['strategy_points_setting_maxperchoice'] = 'Maximum number of points the user may give to a single choice';
 $string['strategy_points_illegal_entry'] = 'The points that you assign to a choice must be between 0 and {$a}.';
 
 // Specific to Strategy05, Order

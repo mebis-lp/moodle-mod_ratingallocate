@@ -331,6 +331,34 @@ class mod_ratingallocate_renderer extends plugin_renderer_base {
             'action' => ACTION_MANUAL_ALLOCATION)), get_string('manual_allocation_form', ratingallocate_MOD_NAME), 'get',
             array('disabled' => !$ratingover));
 
+
+        if (has_capability('mod/ratingallocate:distribute_unallocated', context_module::instance($coursemoduleid))) {
+            $output .= html_writer::start_div('ratingallocate_distribute_unallocated');
+
+            $distributeunallocatedurl = new moodle_url($PAGE->url, array('action' => ACTION_DISTRIBUTE_UNALLOCATED_EQUALLY));
+
+            $button = new single_button($distributeunallocatedurl,
+                get_string('distributeequally', ratingallocate_MOD_NAME), 'get');
+            // Enable only if the instance is ready and the algorithm may run manually
+            $button->disabled = !($ratingover);
+            $button->add_action(new confirm_action(
+                get_string('distribute_unallocated_equally_confirm',ratingallocate_MOD_NAME)));
+
+            $output .= $this->render($button);
+
+            $distributeunallocatedurl = new moodle_url($PAGE->url, array('action' => ACTION_DISTRIBUTE_UNALLOCATED_FILL));
+            $button = new single_button($distributeunallocatedurl,
+                get_string('distributefill', ratingallocate_MOD_NAME), 'get');
+            // Enable only if the instance is ready and the algorithm may run manually
+            $button->disabled = !($ratingover);
+            $button->add_action(new confirm_action(
+                get_string('distribute_unallocated_fill_confirm', ratingallocate_MOD_NAME)));
+
+            $output .= $this->render($button);
+            $output .= $this->help_icon('distribution_description', ratingallocate_MOD_NAME);
+            $output .= html_writer::end_div();
+        }
+
         $output .= $this->box_end();
         return $output;
     }
@@ -410,23 +438,34 @@ class mod_ratingallocate_renderer extends plugin_renderer_base {
         global $OUTPUT, $CFG, $PAGE;
         require_once($CFG->libdir . '/tablelib.php');
 
-        $starturl = new moodle_url($PAGE->url->out(), array('action' => ACTION_EDIT_CHOICE));
+        $starturl = new moodle_url($this->page->url, array('action' => ACTION_EDIT_CHOICE));
+        echo $this->output->single_button($starturl, get_string('newchoice', 'mod_ratingallocate'), 'get');
+
+        // Only show CSV upload button if rating has not started.
+        if ($ratingallocate->get_status() === ratingallocate::DISTRIBUTION_STATUS_TOO_EARLY) {
+            $uploadcsvurl = new moodle_url($this->page->url, array('action' => ACTION_UPLOAD_CHOICES));
+            echo $this->output->single_button($uploadcsvurl, get_string('csvupload', 'ratingallocate'), 'get', array(
+                'tooltip' => get_string('csvupload_explanation', 'ratingallocate')
+            ));
+        }
+
         // Set up the table.
-        echo $OUTPUT->single_button($starturl->out(), get_string('newchoice', 'mod_ratingallocate'), 'get');
         $table = new \flexible_table('show_ratingallocate_options');
         $table->define_baseurl($PAGE->url);
         if ($choicesmodifiably) {
-            $table->define_columns(array('title', 'explanation', 'maxsize', 'active', 'tools'));
+            $table->define_columns(array('title', 'explanation', 'maxsize', 'active', 'usegroups', 'tools'));
             $table->define_headers(array(get_string('choice_table_title', 'mod_ratingallocate'),
                 get_string('choice_table_explanation', 'mod_ratingallocate'),
                 get_string('choice_table_maxsize', 'mod_ratingallocate'),
                 get_string('choice_table_active', 'mod_ratingallocate'),
+                get_string('choice_table_usegroups', 'mod_ratingallocate'),
                 get_string('choice_table_tools', 'mod_ratingallocate')));
         } else {
-            $table->define_columns(array('title', 'explanation', 'maxsize', 'active'));
+            $table->define_columns(array('title', 'explanation', 'maxsize', 'active', 'usegroups'));
             $table->define_headers(array(get_string('choice_table_title', 'mod_ratingallocate'),
                 get_string('choice_table_explanation', 'mod_ratingallocate'),
                 get_string('choice_table_maxsize', 'mod_ratingallocate'),
+                get_string('choice_table_usegroups', 'mod_ratingallocate'),
                 get_string('choice_table_tools', 'mod_ratingallocate')));
         }
         $table->set_attribute('id', 'mod_ratingallocateshowoptions');
@@ -455,6 +494,12 @@ class mod_ratingallocate_renderer extends plugin_renderer_base {
             } else {
                 $row[] = get_string('no');
             }
+            if ($choice->{this_db\ratingallocate_choices::USEGROUPS}) {
+                $row[] = get_string('yes');
+            } else {
+                $row[] = get_string('no');
+            }
+
             if ($choicesmodifiably) {
                 $row[] = $this->render_tools($idx, $choice->{this_db\ratingallocate_choices::ACTIVE},
                     $choice->{this_db\ratingallocate_choices::TITLE});

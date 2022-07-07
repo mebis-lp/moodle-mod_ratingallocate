@@ -33,6 +33,7 @@ global $CFG;
 require_once(dirname(__FILE__) . '/lib.php');
 require_once(dirname(__FILE__) . '/form_manual_allocation.php');
 require_once(dirname(__FILE__) . '/form_modify_choice.php');
+require_once(dirname(__FILE__) . '/form_upload_choices.php');
 require_once(dirname(__FILE__) . '/renderable.php');
 require_once($CFG->dirroot.'/group/lib.php');
 require_once($CFG->dirroot . '/repository/lib.php');
@@ -80,11 +81,14 @@ define('ACTION_GIVE_RATING', 'give_rating');
 define('ACTION_DELETE_RATING', 'delete_rating');
 define('ACTION_SHOW_CHOICES', 'show_choices');
 define('ACTION_EDIT_CHOICE', 'edit_choice');
+define('ACTION_UPLOAD_CHOICES', 'upload_choices');
 define('ACTION_ENABLE_CHOICE', 'enable_choice');
 define('ACTION_DISABLE_CHOICE', 'disable_choice');
 define('ACTION_DELETE_CHOICE', 'delete_choice');
 define('ACTION_START_DISTRIBUTION', 'start_distribution');
 define('ACTION_MANUAL_ALLOCATION', 'manual_allocation');
+define('ACTION_DISTRIBUTE_UNALLOCATED_FILL', 'distribute_unallocated_fill');
+define('ACTION_DISTRIBUTE_UNALLOCATED_EQUALLY', 'distribute_unallocated_equally');
 define('ACTION_PUBLISH_ALLOCATIONS', 'publish_allocations'); // Make them displayable for the users.
 define('ACTION_SOLVE_LP_SOLVE', 'solve_lp_solve'); // Instead of only generating the mps-file, let it solve.
 define('ACTION_SHOW_RATINGS_AND_ALLOCATION_TABLE', 'show_ratings_and_allocation_table');
@@ -195,7 +199,7 @@ class ratingallocate {
      * @throws coding_exception
      */
     private function process_action_start_distribution() {
-        global $DB, $PAGE;
+        global $CFG, $DB, $PAGE;
         // Process form: Start distribution and call default page after finishing.
         if (has_capability('mod/ratingallocate:start_distribution', $this->context)) {
 
@@ -213,6 +217,21 @@ class ratingallocate {
                 redirect(new moodle_url('/mod/ratingallocate/view.php',
                     array('id' => $this->coursemodule->id)),
                     get_string('algorithm_scheduled_for_cron', ratingallocate_MOD_NAME),
+                    null,
+                    \core\output\notification::NOTIFY_INFO);
+            } else if ($CFG->ratingallocate_algorithm_force_background_execution === '1') {
+                // Force running algorithm by cron.
+                $this->ratingallocate->runalgorithmbycron = 1;
+                // Reset status to 'not started'.
+                $this->ratingallocate->algorithmstatus = \mod_ratingallocate\algorithm_status::notstarted;
+                $this->origdbrecord->{this_db\ratingallocate::RUNALGORITHMBYCRON} = '1';
+                $this->origdbrecord->{this_db\ratingallocate::ALGORITHMSTATUS} = \mod_ratingallocate\algorithm_status::notstarted;
+                // Clear all previous allocations so cron job picks up this task and calculates new allocation.
+                $this->clear_all_allocations();
+                $DB->update_record(this_db\ratingallocate::TABLE, $this->origdbrecord);
+                redirect(new moodle_url('/mod/ratingallocate/view.php',
+                    array('id' => $this->coursemodule->id)),
+                    get_string('algorithm_now_scheduled_for_cron', ratingallocate_MOD_NAME),
                     null,
                     \core\output\notification::NOTIFY_INFO);
             } else {
@@ -379,11 +398,16 @@ class ratingallocate {
 
                 if (!$mform->is_cancelled()) {
                     if ($mform->is_validated()) {
+                        if($data->usegroups) {
+                            $this->update_choice_groups($data->choiceid, $data->groupselector);
+                        }
+
                         // Processing for editor element (FORMAT_HTML is assumed).
                         // Note: No file management implemented at this point.
                         if (is_array($data->explanation)) {
                             $data->explanation = $data->explanation['text'];
                         }
+
                         $this->save_modify_choice_form($data);
 
                         $data = file_postupdate_standard_filemanager($data, 'attachments', $options, $this->context,
@@ -422,6 +446,65 @@ class ratingallocate {
     }
 
     /**
+     * Upload one or more choices via a CSV file.
+     */
+    private function process_action_upload_choices() {
+        global $DB, $PAGE;
+
+        $output = '';
+        if (has_capability('mod/ratingallocate:modify_choices', $this->context)) {
+            global $OUTPUT;
+
+            $url = new moodle_url('/mod/ratingallocate/view.php',
+                array('id' => $this->coursemodule->id,
+                    'ratingallocateid' => $this->ratingallocateid,
+                    'action' => ACTION_UPLOAD_CHOICES,
+                )
+            );
+            $mform = new upload_choices_form($url, $this);
+            $renderer = $this->get_renderer();
+
+            if ($mform->is_submitted() && $data = $mform->get_submitted_data()) {
+                if (!$mform->is_cancelled()) {
+                    if ($mform->is_validated()) {
+                        $content = $mform->get_file_content('uploadfile');
+                        $name = $mform->get_new_filename('uploadfile');
+                        $live = !$data->testimport;  // If testing, importer is not live.
+                        // Properly process the file content.
+                        $choiceimporter = new \mod_ratingallocate\choice_importer($this->ratingallocateid, $this);
+                        $importstatus = $choiceimporter->import($content, $live);
+
+                        switch ($importstatus->status) {
+                            case \mod_ratingallocate\choice_importer::IMPORT_STATUS_OK:
+                                \core\notification::info($importstatus->status_message);
+                                break;
+                            case \mod_ratingallocate\choice_importer::IMPORT_STATUS_DATA_ERROR:
+                                \core\notification::warning($importstatus->status_message);
+                                $choiceimporter->issue_notifications($importstatus->errors);
+                                break;
+                            case \mod_ratingallocate\choice_importer::IMPORT_STATUS_SETUP_ERROR:
+                            default:
+                                \core\notification::error($importstatus->status_message);
+                                $choiceimporter->issue_notifications($importstatus->errors,
+                                    \core\output\notification::NOTIFY_ERROR);
+                        }
+
+                        redirect(new moodle_url('/mod/ratingallocate/view.php',
+                            array(
+                                'id' => $this->coursemodule->id,
+                                'action' => ACTION_SHOW_CHOICES
+                            )));
+                    }
+                }
+            }
+
+            $output .= $OUTPUT->heading(get_string('upload_choices', 'ratingallocate'), 2);
+            $output .= $mform->to_html();
+        }
+        return $output;
+    }
+
+    /**
      * Enables or disables a choice and displays the choices list.
      * @param bool $active states if the choice should be set active or inavtive
      */
@@ -453,6 +536,9 @@ class ratingallocate {
                 $choice = $DB->get_record(this_db\ratingallocate_choices::TABLE, array('id' => $choiceid));
                 if ($choice) {
                     $DB->delete_records(this_db\ratingallocate_choices::TABLE, array('id' => $choiceid));
+                    // Delete related group associations, if any.
+                    $DB->delete_records(this_db\ratingallocate_group_choices::TABLE, array('choiceid' => $choiceid));
+
                     redirect(new moodle_url('/mod/ratingallocate/view.php',
                         array('id' => $this->coursemodule->id, 'action' => ACTION_SHOW_CHOICES)),
                         get_string('choice_deleted_notification', ratingallocate_MOD_NAME,
@@ -535,6 +621,136 @@ class ratingallocate {
             $this->showinfo = false;
         }
         return $output;
+    }
+
+    public function distribute_users_without_choice(string $distributionalgorithm): void {
+
+        $placesleft = [];
+        foreach ($this->get_rateable_choices() as $choice) {
+            $placesleft[$choice->id] = $choice->maxsize -
+                count(array_filter($this->get_allocations(), fn($allocation) => $allocation->choiceid === $choice->id));
+        }
+        $undistributeduserids = array_map(fn($user) => $user->id, array_values(array_filter($this->get_raters_in_course(), fn($user) =>
+            !in_array($user->id, array_keys($this->get_allocations())))));
+
+        $transaction = $this->db->start_delegated_transaction();
+
+        switch ($distributionalgorithm) {
+            case ACTION_DISTRIBUTE_UNALLOCATED_EQUALLY:
+                $possibleusers = [];
+                foreach ($this->get_rateable_choices() as $currentchoice) {
+                    $usersforcurrentchoice = $this->filter_userids_who_can_rate_choice($undistributeduserids, $currentchoice->id);
+                    $possibleusers[$currentchoice->id] = $usersforcurrentchoice;
+                }
+
+                // We are assigning as long as for each choice we have
+                // - users allocatable to the choice
+                // - places available for this choice
+                while (!empty(array_filter(array_keys($placesleft),
+                        fn($choiceid) => $placesleft[$choiceid] > 0 && count($possibleusers[$choiceid]) > 0))) {
+                    // We now determine the choice with the most places left.
+                    $placesleftmax = max($placesleft);
+                    while ($placesleftmax === 0) {
+                        $choiceidtounset = array_search(0, $placesleft);
+                        unset($placesleft[$choiceidtounset]);
+                        unset($possibleusers[$choiceidtounset]);
+                        $placesleftmax = max($placesleft);
+                    }
+                    // That is the choice with the most places left.
+                    $choicetoassign = array_search($placesleftmax, $placesleft);
+
+                    if (count($possibleusers[$choicetoassign]) > 0) {
+                        $usertoallocate = array_shift($possibleusers[$choicetoassign]);
+
+                        $this->add_allocation($choicetoassign, $usertoallocate);
+                        foreach ($possibleusers as &$users) {
+                            $userindex = array_search($usertoallocate, $users);
+                            if ($userindex !== false) {
+                                unset($users[$userindex]);
+                            }
+                        }
+                        $placesleft[$choicetoassign] = $placesleft[$choicetoassign] - 1;
+                    } else {
+                        // If there are no users possible to assign, we can remove the choice from our iteration.
+                        unset($placesleft[$choicetoassign]);
+                        unset($possibleusers[$choicetoassign]);
+                    }
+                }
+                break;
+            case ACTION_DISTRIBUTE_UNALLOCATED_FILL:
+            default:
+                // We need our own copy of this array, because we want to manipulate it.
+                $placesleftcopy = $placesleft;
+                $choicessortedbygroupcount = [];
+                foreach ($this->get_rateable_choices() as $choice) {
+                    // At first only take choices with groups defined.
+                    $groupcount = count($this->get_choice_groups($choice->id));
+                    if ($choice->usegroups && $groupcount > 0) {
+                        $choicessortedbygroupcount[$choice->id] = $groupcount;
+                        unset($placesleftcopy[array_search($choice->id, $placesleftcopy)]);
+                    }
+                }
+                asort($choicessortedbygroupcount);
+                asort($placesleftcopy);
+                // Then we also add choices without group restriction, sorted by places left.
+                foreach ($placesleftcopy as $choiceid => $placescount) {
+                    $choicessortedbygroupcount[$choiceid] = $placescount;
+                }
+
+                foreach (array_keys($choicessortedbygroupcount) as $choiceid) {
+                    // We now handle the choice with the least count of groups first.
+                    // First get all users which can rate the current choice.
+                    $possibleusers = $this->filter_userids_who_can_rate_choice($undistributeduserids, $choiceid);
+
+                    while($placesleft[$choiceid] > 0) {
+                        $nextuser = array_shift($possibleusers);
+                        if (!$nextuser) {
+                            continue 2;
+                        }
+                        $this->add_allocation($choiceid, $nextuser);
+                        $placesleft[$choiceid] = $placesleft[$choiceid] - 1;
+                        unset($undistributeduserids[array_search($nextuser, $undistributeduserids)]);
+                    }
+                }
+            }
+        $transaction->allow_commit();
+    }
+
+    /**
+     * Helper function to retrieve all users who can rate the given choice due to group restrictions.
+     *
+     * This function sorts the users dependent on the fact how many groups they are member in. Users with less groups
+     * than others come first.
+     *
+     * @param int $choiceid
+     * @return array $users array of users, sorted from 'has less groups' to 'has more groups'
+     */
+    private function filter_userids_who_can_rate_choice(array $userids, int $choiceid): array {
+        $choicesfiltered = array_filter($this->get_rateable_choices(), fn($choice) => $choice->id == $choiceid);
+        if (empty($choicesfiltered)) {
+            // We could not find the choice with the given id.
+            return [];
+        }
+        $choice = array_values($choicesfiltered)[0];
+
+        // If we have a choice without group mode, return all possible users.
+        if (!$choice->usegroups) {
+            return $userids;
+        }
+        // If we have a choice with group mode, but without any specified groups, no user can be distributed to this choice.
+        if (empty($this->get_choice_groups($choice->id))) {
+            return [];
+        }
+
+        // In all other cases: Filter users by their groups.
+        $filtereduserids = array_filter($userids,
+            fn($userid) => in_array($choiceid,
+                array_map(fn($choice) => $choice->id,
+                    $this->filter_choices_by_groups($this->get_rateable_choices(), $userid))));
+        usort($filtereduserids, fn($a, $b) =>
+                count($this->filter_choices_by_groups($this->get_rateable_choices(), $a))
+                    > count($this->filter_choices_by_groups($this->get_rateable_choices(), $b)) ? 1 : -1);
+        return $filtereduserids;
     }
 
     private function process_action_show_ratings_and_alloc_table() {
@@ -718,6 +934,15 @@ class ratingallocate {
                 $this->showinfo = false;
                 break;
 
+            case ACTION_UPLOAD_CHOICES:
+                $result = $this->process_action_upload_choices();
+                if (!$result) {
+                    return "";
+                }
+                $output .= $result;
+                $this->showinfo = false;
+                break;
+
             case ACTION_ENABLE_CHOICE:
                 $this->process_action_enable_choice(true);
                 return "";
@@ -740,6 +965,16 @@ class ratingallocate {
 
             case ACTION_MANUAL_ALLOCATION:
                 $output .= $this->process_action_manual_allocation();
+                break;
+
+            case ACTION_DISTRIBUTE_UNALLOCATED_EQUALLY:
+            case ACTION_DISTRIBUTE_UNALLOCATED_FILL:
+                $this->distribute_users_without_choice($action);
+                redirect(new moodle_url('/mod/ratingallocate/view.php',
+                            ['id' => $this->coursemodule->id, 'action' => ACTION_NONE]),
+                    get_string('unassigned_users_assigned', ratingallocate_MOD_NAME),
+                    null,
+                    \core\output\notification::NOTIFY_SUCCESS);
                 break;
 
             case ACTION_SHOW_RATINGS_AND_ALLOCATION_TABLE:
@@ -768,6 +1003,9 @@ class ratingallocate {
             $choicestatus->publishdate = $this->ratingallocate->publishdate;
             $choicestatus->is_published = $this->ratingallocate->published;
             $choicestatus->available_choices = $this->get_rateable_choices();
+            // Filter choices to display by groups, where 'usegroups' is true.
+            $choicestatus->available_choices = $this->filter_choices_by_groups($choicestatus->available_choices, $USER->id);
+
             $strategysettings = $this->get_strategy_class()->get_static_settingfields();
             if (array_key_exists(ratingallocate\strategy_order\strategy::COUNTOPTIONS, $strategysettings)) {
                 $choicestatus->necessary_choices =
@@ -776,6 +1014,8 @@ class ratingallocate {
                 $choicestatus->necessary_choices = 0;
             }
             $choicestatus->own_choices = $this->get_rating_data_for_user($USER->id);
+            // Filter choices to display by groups, where 'usegroups' is true.
+            $choicestatus->own_choices = $this->filter_choices_by_groups($choicestatus->own_choices, $USER->id);
             $choicestatus->allocations = $this->get_allocations_for_user($USER->id);
             $choicestatus->strategy = $this->get_strategy_class();
             $choicestatus->show_distribution_info = has_capability('mod/ratingallocate:start_distribution', $this->context);
@@ -1138,7 +1378,7 @@ class ratingallocate {
      * @return array
      */
     public function get_rating_data_for_user($userid) {
-        $sql = "SELECT c.id as choiceid, c.title, c.explanation, c.ratingallocateid, c.maxsize, r.rating, r.id AS ratingid, r.userid
+        $sql = "SELECT c.id as choiceid, c.title, c.explanation, c.ratingallocateid, c.maxsize, c.usegroups, r.rating, r.id AS ratingid, r.userid
                 FROM {ratingallocate_choices} c
            LEFT JOIN {ratingallocate_ratings} r
                   ON c.id = r.choiceid and r.userid = :userid
@@ -1267,6 +1507,44 @@ class ratingallocate {
             array(this_db\ratingallocate_choices::RATINGALLOCATEID => $this->ratingallocateid,
                 this_db\ratingallocate_choices::ACTIVE => true,
             ), this_db\ratingallocate_choices::TITLE);
+    }
+
+    /**
+     * Filters a list of choice data objects according to a user's group membership.
+     *
+     * @param array $choices An array of objects, keyed by ID. Objects must have a 'usegroups' field.
+     * @param int $userid A user ID.
+     *
+     * @return array A filtered array of choices, keyed by ID.
+     */
+    public function filter_choices_by_groups($choices, $userid) {
+
+        // See all the choices, if you have the capability to modify them.
+        if (has_capability('mod/ratingallocate:modify_choices', $this->context)
+            || has_capability('mod/ratingallocate:export_ratings', $this->context)) {
+            return $choices;
+        }
+
+        $filteredchoices = array();
+
+        // Index 0 for "all groups" without groupings.
+        $usergroupids = groups_get_user_groups($this->course->id, $userid)[0];
+
+        foreach ($choices as $choiceid => $choice) {
+            if ($choice->usegroups) {
+                // Check for overlap between user group and choice group IDs.
+                $choicegroups = $this->get_choice_groups($choiceid);
+                $intersection = array_intersect($usergroupids, array_keys($choicegroups));
+                // Pass if there is an intersection, block otherwise.
+                if (count($intersection)) {
+                    $filteredchoices[$choiceid] = $choice;
+                }
+            } else {
+                $filteredchoices[$choiceid] = $choice;
+            }
+        }
+
+        return $filteredchoices;
     }
 
     /**
@@ -1552,6 +1830,89 @@ class ratingallocate {
     }
 
     /**
+     * Get candidate group selection options for a groupselector form element.
+     *
+     * @param array $grouplist (optional) A list of group records to build mappings from.
+     *
+     * @return array A mapping of group IDs to names.
+     */
+    public function get_group_selections($grouplist=null) {
+        $options = array();
+
+        // Default to all relevant groups for this context.
+        if (!$grouplist) {
+            $grouplist = groups_get_all_groups($this->course->id);
+        }
+
+        foreach ($grouplist as $group) {
+            $options[$group->id] = $group->name;
+        }
+
+        return $options;
+    }
+
+    /**
+     * Returns the groups associated with a ratingallocate choice.
+     *
+     * @param int $choiceid
+     *
+     * @return array A list of group records.
+     */
+    public function get_choice_groups($choiceid) {
+        global $DB;
+
+        $sql = 'SELECT g.*
+        FROM {ratingallocate_group_choices} gc
+        JOIN {groups} g ON gc.groupid=g.id
+        WHERE choiceid=:choiceid';
+
+        $records = $DB->get_records_sql($sql, array('choiceid' => $choiceid));
+        $results = array();
+
+        foreach ($records as $record) {
+            $results[$record->id] = $record;
+        }
+
+        return $results;
+    }
+
+    /**
+     * Update group set for a choice item.
+     *
+     * @param int $choiceid A ratingallocate_choice.
+     * @param array $groupids An array of group IDs to be associated with the choice item.
+     *
+     * @return null
+     */
+    public function update_choice_groups($choiceid, $groupids) {
+        global $DB;
+
+        // Check group IDs against existing choices.
+        $oldgroups = $this->get_choice_groups($choiceid);
+        $oldids = array_keys($oldgroups);
+
+        // Diff gives us all IDs in the first list, but not in the second.
+        $removals = array_values(array_diff($oldids, $groupids));
+        $additions = array_values(array_diff($groupids, $oldids));
+
+        // Add records for new choice group entries.
+        foreach ($additions as $gid) {
+            $record = new stdClass();
+            $record->choiceid = $choiceid;
+            $record->groupid = $gid;
+            $DB->insert_record('ratingallocate_group_choices', $record);
+        }
+
+        // Remove records for obsolete choice group entries.
+        foreach ($removals as $gid) {
+            $DB->delete_records('ratingallocate_group_choices', array(
+                'choiceid' => $choiceid,
+                'groupid' => $gid,
+            ));
+        }
+    }
+
+    /**
      * @return bool true, if all strategy settings are ok.
      */
     public function is_setup_ok() {
@@ -1596,6 +1957,7 @@ class ratingallocate {
  * @property string explanation
  * @property int $maxsize
  * @property bool $active
+ * @property bool $usegroups Whether to restrict the visibility of this choice to the members of specified groups.
  */
 class ratingallocate_choice {
     /** @var stdClass original db record */
@@ -1623,7 +1985,41 @@ class ratingallocate_choice {
     }
 
 }
+/**
+ * Kapselt eine Instanz von ratingallocate_group_choices.
+ * (Encapsulating an instance of ratingallocate_group_choices.)
+ *
+ * @property int $id
+ * @property int $choiceid
+ * @property int $groupid
+ */
+class ratingallocate_group_choices {
+    /** @var stdClass original db record */
+    public $dbrecord;
 
+    /**
+     * Emulates the functionality as if there were explicit records by passing them to the original db record.
+     *
+     * @param string $name
+     * @return mixed
+     */
+    public function __get($name) {
+        return $this->dbrecord->{$name};
+    }
+
+    /**
+     * Emulates the functionality as if there were explicit records by passing them to the original db record.
+     *
+     * @param string $name
+     */
+    public function __set($name, $value) {
+        $this->dbrecord->{$name} = $value;
+    }
+
+    public function __construct($record) {
+        $this->dbrecord = $record;
+    }
+}
 /**
  * Remove all users (or one user) from one group, invented by MxS by copying from group/lib.php
  * because it didn't exist there
