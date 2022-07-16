@@ -58,6 +58,124 @@ class mod_ratingallocate_allocate_unrated_test extends advanced_testcase {
         }
     }
 
+    /**
+     * Tests the helper function to retrieve all used groups by the choices.
+     *
+     * @covers ratingallocate::get_all_groups_of_choices
+     * @return void
+     */
+    public function test_get_all_groups_of_choices(): void {
+        $choices = [];
+
+        $letters = range('A', 'E');
+        foreach ($letters as $letter) {
+            $choice = [
+                'title' => "$letter",
+                'explanation' => "Explain Choice $letter",
+                'maxsize' => 8,
+                'active' => true,
+            ];
+
+            if ($letter === 'C' || $letter === 'D' || $letter === 'E') {
+                $choice['usegroups'] = true;
+            } else {
+                $choice['usegroups'] = false;
+            }
+            $choices[] = $choice;
+        }
+
+        $mod = mod_ratingallocate_generator::create_instance_with_choices($this,
+            ['course' => $this->course,
+                'strategyopt' => ['countoptions' => 3],
+                'strategy' => 'strategy_order'],
+            $choices);
+        $this->ratingallocate = mod_ratingallocate_generator::get_ratingallocate_for_user($this, $mod, $this->teacher);
+
+        // Assign blue group to choice D, green group to choice E.
+        $this->ratingallocate->update_choice_groups($this->get_choice_id_by_title('D'), [$this->blue->id]);
+        $this->ratingallocate->update_choice_groups($this->get_choice_id_by_title('E'), [$this->green->id]);
+        // Choice C has group restrictions enabled, but no groups defined, so should be ignored.
+        // Choice B has no group restrictions enabled, so its group 'red' should be ignored.
+        $this->ratingallocate->update_choice_groups($this->get_choice_id_by_title('B'), [$this->red->id]);
+
+        $this->assertCount(2, $this->ratingallocate->get_all_groups_of_choices());
+        $this->assertTrue(in_array($this->blue->id, $this->ratingallocate->get_all_groups_of_choices()));
+        $this->assertTrue(in_array($this->green->id, $this->ratingallocate->get_all_groups_of_choices()));
+        $this->assertFalse(in_array($this->red->id, $this->ratingallocate->get_all_groups_of_choices()));
+    }
+
+    /**
+     * Tests the method returning all possible users for all of the available choices.
+     *
+     * In particular this method tests the correct sorting of the users.
+     *
+     * @covers ratingallocate::get_possible_users_for_choices()
+     * @return void
+     * @throws coding_exception
+     */
+    public function test_get_possible_users_for_choices(): void {
+        $choices = [];
+
+        $letters = range('A', 'E');
+        foreach ($letters as $letter) {
+            $choice = [
+                'title' => "$letter",
+                'explanation' => "Explain Choice $letter",
+                'maxsize' => 8,
+                'active' => true,
+            ];
+
+            if ($letter === 'D' || $letter === 'E') {
+                $choice['usegroups'] = true;
+            } else {
+                $choice['usegroups'] = false;
+            }
+            $choices[] = $choice;
+        }
+
+        $mod = mod_ratingallocate_generator::create_instance_with_choices($this,
+            ['course' => $this->course,
+                'strategyopt' => ['countoptions' => 3],
+                'strategy' => 'strategy_order'],
+            $choices);
+        $this->ratingallocate = mod_ratingallocate_generator::get_ratingallocate_for_user($this, $mod, $this->teacher);
+
+        // Assign blue and green group to choice D, red group to choice E.
+        $this->ratingallocate->update_choice_groups($this->get_choice_id_by_title('D'),
+            [$this->blue->id, $this->green->id, $this->red->id]);
+        $this->ratingallocate->update_choice_groups($this->get_choice_id_by_title('E'), [$this->red->id]);
+
+        // For this test we have to assign users to multiple groups, so we can check if they are sorted correctly.
+        // Pick random red group user, also assign to group blue and green.
+        $studentredbluegreen = $this->studentsred[5];
+        groups_add_member($this->green, $studentredbluegreen);
+        groups_add_member($this->blue, $studentredbluegreen);
+
+        // Pick another different random red group user, also to group blue.
+        $studentredblue = $this->studentsred[7];
+        groups_add_member($this->blue, $studentredblue);
+
+        $possibleusers = $this->ratingallocate->get_possible_users_for_choices();
+
+        // We check possible users for choice 'D'.
+        $possibleusersforchoice = $possibleusers[$this->get_choice_id_by_title('D')];
+        $this->assertTrue(array_search($this->studentsred[2]->id, $possibleusersforchoice)
+            < array_search($studentredblue->id, $possibleusersforchoice));
+        $this->assertTrue(array_search($studentredblue->id, $possibleusersforchoice)
+            < array_search($studentredbluegreen->id, $possibleusersforchoice));
+        // Students without group membership must not be listed.
+        $this->assertFalse(in_array($this->studentsnogroup[5], $possibleusersforchoice));
+
+        // We check possible users for choice 'B', a choice without group restrictions.
+        $possibleusersforchoice = $possibleusers[$this->get_choice_id_by_title('B')];
+        $this->assertTrue(array_search($this->studentsnogroup[5]->id, $possibleusersforchoice)
+            < array_search($this->studentsred[2]->id, $possibleusersforchoice));
+        $this->assertTrue(array_search($this->studentsred[2]->id, $possibleusersforchoice)
+            < array_search($studentredblue->id, $possibleusersforchoice));
+        $this->assertTrue(array_search($studentredblue->id, $possibleusersforchoice)
+            < array_search($studentredbluegreen->id, $possibleusersforchoice));
+    }
+
     private function get_choice_id_by_title(string $title): int {
         return $this->get_choice_by_title($title)->id;
     }
