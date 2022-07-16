@@ -59,6 +59,33 @@ class mod_ratingallocate_allocate_unrated_test extends advanced_testcase {
     }
 
     /**
+     * Asserts that there is no allocation violating the group restrictions. This should be called after the algorithms have been
+     * run to assert that the algorithm did respect the group restrictions when allocating.
+     *
+     * @return void
+     */
+    private function test_group_memberships(): void {
+        foreach ([$this->studentsred, $this->studentsblue, $this->studentsgreen] as $students) {
+            foreach ($students as $student) {
+                $allocations = $this->ratingallocate->get_allocations_for_user($student->id);
+                foreach ($allocations as $allocation) {
+                    if (empty(array_filter($this->ratingallocate->get_rateable_choices(),
+                        fn($choice) => $choice->id === $allocation->choiceid)[0]->usegroups)) {
+                        // If the choice has no group restrictions active we do not have to assert anything.
+                        continue;
+                    }
+                    $choicegroups =
+                        array_map(fn($group) => $group->id, $this->ratingallocate->get_choice_groups($allocation->choiceid));
+                    $usergroups = groups_get_user_groups($this->course->id, $student->id)[0];
+                    print_r($choicegroups);
+                    print_r($usergroups);
+                    $this->assertFalse(empty(array_intersect($choicegroups, $usergroups)));
+                }
+            }
+        }
+    }
+
+    /**
      * Tests the helper function to retrieve all used groups by the choices.
      *
      * @covers ratingallocate::get_all_groups_of_choices
@@ -342,6 +369,7 @@ class mod_ratingallocate_allocate_unrated_test extends advanced_testcase {
             $this->assertTrue(in_array($allocation->userid,
                 array_map(fn($user) => $user->id, array_merge($this->studentsblue, $this->studentsgreen))));
         }
+        $this->test_group_memberships();
     }
 
     /**
@@ -389,7 +417,6 @@ class mod_ratingallocate_allocate_unrated_test extends advanced_testcase {
         $this->ratingallocate->clear_all_allocations();
         foreach($newusers as $user) {
             delete_user($user);
-
         }
     }
 
