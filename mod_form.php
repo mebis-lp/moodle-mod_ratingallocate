@@ -149,7 +149,9 @@ class mod_ratingallocate_mod_form extends moodleform_mod {
      */
     private function add_settings_field($stratfieldid, array $value, $strategyid, MoodleQuickForm $mform) {
 
-        $attributes = array('size' => '20');
+        // +++ MBS-HACK (Thomas Ludwig): unset size="20", because of styling issues in mod_form (MBS-HACK).
+        // $attributes = array('size' => '20');
+        // --- MBS-HACK.
 
         if ($value[0] != "select" && isset($value[3])) {
             $attributes['placeholder'] = ($value[3]);
