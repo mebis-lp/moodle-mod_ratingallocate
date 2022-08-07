@@ -53,7 +53,7 @@
     background-size: 13px 13px;
 }
 .ratingallocate_ratings_table span input[type=radio] {
-    display: none;
+    display: none !important;
 }
 
 .ratingallocate_ratings_box {
