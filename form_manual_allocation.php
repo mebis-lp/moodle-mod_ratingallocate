@@ -121,7 +121,7 @@ class manual_alloc_form extends moodleform {
             $hidenorating, $showallocnecessary);
 
         $filter = $table->get_filter();
-        
+
         $mform->setDefault('hide_users_without_rating', $filter['hidenorating']);
         $mform->getElement('hide_users_without_rating')->setChecked($filter['hidenorating']);
         $mform->setDefault('show_alloc_necessary', $filter['showallocnecessary']);
@@ -135,7 +135,8 @@ class manual_alloc_form extends moodleform {
         $table->build_table_by_sql($ratingdata, $this->ratingallocate->get_allocations(), true);
         $tableoutput = ob_get_contents();
         ob_end_clean();
-        $mform->addElement('html', $tableoutput);
+        $mform->addElement('html', html_writer::div($tableoutput,
+            'ratingallocate_ratings_table_container'));
 
         $mform->setDefault('page', $table->get_page_start()/$table->get_page_size());
 
