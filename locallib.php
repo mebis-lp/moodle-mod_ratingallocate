@@ -687,11 +687,7 @@ class ratingallocate {
             usort($possibleusersforcurrentchoice, function($a, $b) {
                 $groupscounta = count($this->get_user_groupids($a));
                 $groupscountb = count($this->get_user_groupids($b));
-                if ($groupscounta === $groupscountb) {
-                    return 0;
-                } else {
-                    return $groupscounta > $groupscountb ? 1 : -1;
-                }
+                return $groupscounta - $groupscountb;
             });
         }
         return $possibleusers;
@@ -832,9 +828,6 @@ class ratingallocate {
                 }
                 return $isselectable;
             });
-        usort($filtereduserids, fn($a, $b) =>
-                count($this->filter_choices_by_groups($this->get_rateable_choices(), $a))
-                    > count($this->filter_choices_by_groups($this->get_rateable_choices(), $b)) ? 1 : -1);
         return $filtereduserids;
     }
 
