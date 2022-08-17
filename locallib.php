@@ -178,7 +178,8 @@ class ratingallocate {
      * Returns all users enrolled in the course the ratingallocate is in
      */
     public function get_raters_in_course() {
-        $raters = get_enrolled_users($this->context, 'mod/ratingallocate:give_rating');
+        // Pulling this sorted from the database improves performance of distribution of unallocated users by a lot.
+        $raters = get_enrolled_users($this->context, 'mod/ratingallocate:give_rating', 0, 'u.*', 'id');
         return $raters;
     }
 
@@ -659,176 +660,201 @@ class ratingallocate {
     }
 
     /**
-     * Retrieves an array containing 'choiceid' => ['userid'].
+     * Helper function to retrieve undistributed users.
      *
-     * For each choiceid as key there will be an array of userids assignable to this choice. The userids are being sorted by group
-     * membership count. The fewer groups a user is member of the smaller his index is in this array.
+     * This function returns an associative array [groupcount => [ users ]], groupcount meaning the amount of groups (used in
+     *  ratingallocate choices) the users are member of.
      *
-     * @return array ['choiceid' => ['userid']]: maps a choiceid onto an array of userids assignable to choice with this choiceid
+     * @return array Associative array [groupcount => [ users ]]
      */
-    public function get_possible_users_for_choices(): array {
+    private function get_undistributed_users_with_groupscount(): array {
+        $undistributedusers = array_map(fn($user) => $user->id, array_values(array_filter($this->get_raters_in_course(),
+            fn($user) => !in_array($user->id, array_keys($this->get_allocations())))));
 
-        $undistributeduserids = array_map(fn($user) => $user->id, array_values(array_filter($this->get_raters_in_course(), fn($user) =>
-                !in_array($user->id, array_keys($this->get_allocations())))));
-
-        $possibleusers = [];
-        foreach ($this->get_rateable_choices() as $currentchoice) {
-            $usersforcurrentchoice = $this->filter_userids_who_can_rate_choice($undistributeduserids, $currentchoice->id);
-            $possibleusers[$currentchoice->id] = $usersforcurrentchoice;
+        $undistributeduserswithgroups = [];
+        foreach ($undistributedusers as $user) {
+            $undistributeduserswithgroups[count($this->get_user_groupids($user))][] = $user;
         }
-
-        // We now have an array which maps a choiceid to an array of possibleusers. We sort these users by the number of groups
-        // they belong to.
-        // Background: The less groups they belong to the needier they are to be assigned to the one of the few groups they are in.
-        // Users without any groups can be treated as 'neediest' (0 groups), because they only are available for choices without
-        // any group restrictions. In this case we want them to be priorized, because we can 'save' the users with groups for the
-        // choices restricted by groups.
-        foreach ($possibleusers as &$possibleusersforcurrentchoice) {
-            usort($possibleusersforcurrentchoice, function($a, $b) {
-                $groupscounta = count($this->get_user_groupids($a));
-                $groupscountb = count($this->get_user_groupids($b));
-                return $groupscounta - $groupscountb;
-            });
-        }
-        return $possibleusers;
+        return $undistributeduserswithgroups;
     }
 
     /**
-     * Distribute all currently unallocated users.
+     * Returns an array of all userids of users which do not have an allocation (yet).
      *
-     * @param string $distributionalgorithm the distributionalgorithm which should be used, you can choose between
-     *  ACTION_DISTRIBUTE_UNALLOCATED_EQUALLY and ACTION_DISTRIBUTE_UNALLOCATED_FILL
-     * @return void
-     * @throws dml_transaction_exception
+     * This array will be sorted: Users with fewer memberships in groups used in the choices will come first. Exception:
+     * Users without group membership (groups count 0) are at the end of the array.
+     *
+     * @return array Array of user ids not having an allocation
      */
-    public function distribute_users_without_choice(string $distributionalgorithm): void {
+    public function get_undistributed_users(): array {
+        $undistributedusers = [];
+        $userswithgroups = $this->get_undistributed_users_with_groupscount();
+        for ($i = 1; $i <= max(array_keys($userswithgroups)); $i++) {
+            if (empty($userswithgroups[$i])) {
+                continue;
+            }
+            $undistributedusers = array_merge($undistributedusers, $userswithgroups[$i]);
+        }
+        if (!empty($userswithgroups[0])) {
+            $undistributedusers = array_merge($undistributedusers, $userswithgroups[0]);
+        }
+        return $undistributedusers;
+    }
+
+    /**
+     * Function to retrieve the next choice which an undistributed user should be assigned to.
+     *
+     * @param string $distributionalgorithm the algorithm which should be applied to search for the next choice
+     * @param int $userid the userid of the user for which the next choice should be retrieved
+     * @return int $choiceid id of the choice the given user should be assigned to
+     * @throws dml_exception
+     */
+    public function get_next_choice_to_assign_user(string $distributionalgorithm, int $userid): int {
+        global $DB;
 
         $placesleft = [];
         foreach ($this->get_rateable_choices() as $choice) {
             $placesleft[$choice->id] = $choice->maxsize -
-                count(array_filter($this->get_allocations(), fn($allocation) => $allocation->choiceid === $choice->id));
+                count(array_filter($this->get_allocations(), fn($allocation) => $allocation->choiceid == $choice->id));
         }
-        $undistributeduserids = array_map(fn($user) => $user->id, array_values(array_filter($this->get_raters_in_course(), fn($user) =>
-            !in_array($user->id, array_keys($this->get_allocations())))));
 
-        $transaction = $this->db->start_delegated_transaction();
+        // We have to remove the choices which are already maxed out.
+        $placesleft = array_filter($placesleft, fn($numberoffreeplaces) => $numberoffreeplaces != 0);
 
-        switch ($distributionalgorithm) {
-            case ACTION_DISTRIBUTE_UNALLOCATED_EQUALLY:
-                $possibleusers = $this->get_possible_users_for_choices();
-
-                // We are assigning as long as for each choice we have
-                // - users allocatable to the choice
-                // - places available for this choice
-                while (!empty(array_filter(array_keys($placesleft),
-                        fn($choiceid) => $placesleft[$choiceid] > 0 && count($possibleusers[$choiceid]) > 0))) {
-                    // We now determine the choice with the most places left.
-                    $placesleftmax = max($placesleft);
-                    while ($placesleftmax === 0) {
-                        $choiceidtounset = array_search(0, $placesleft);
-                        unset($placesleft[$choiceidtounset]);
-                        unset($possibleusers[$choiceidtounset]);
-                        $placesleftmax = max($placesleft);
-                    }
-                    // That is the choice with the most places left.
-                    $choicetoassign = array_search($placesleftmax, $placesleft);
-
-                    if (count($possibleusers[$choicetoassign]) > 0) {
-                        $usertoallocate = array_shift($possibleusers[$choicetoassign]);
-
-                        $this->add_allocation($choicetoassign, $usertoallocate);
-                        foreach ($possibleusers as &$users) {
-                            $userindex = array_search($usertoallocate, $users);
-                            if ($userindex !== false) {
-                                unset($users[$userindex]);
-                            }
-                        }
-                        $placesleft[$choicetoassign] = $placesleft[$choicetoassign] - 1;
-                    } else {
-                        // If there are no users possible to assign, we can remove the choice from our iteration.
-                        unset($placesleft[$choicetoassign]);
-                        unset($possibleusers[$choicetoassign]);
-                    }
-                }
-                break;
-            case ACTION_DISTRIBUTE_UNALLOCATED_FILL:
-            default:
-                // We need our own copy of this array, because we want to manipulate it.
-                $placesleftcopy = $placesleft;
-                $choicessortedbygroupcount = [];
-                foreach ($this->get_rateable_choices() as $choice) {
-                    // At first only take choices with groups defined.
-                    $groupcount = count($this->get_choice_groups($choice->id));
-                    if ($choice->usegroups && $groupcount > 0) {
-                        $choicessortedbygroupcount[$choice->id] = $groupcount;
-                        unset($placesleftcopy[array_search($choice->id, $placesleftcopy)]);
-                    }
-                }
-                asort($choicessortedbygroupcount);
-                asort($placesleftcopy);
-                // Then we also add choices without group restriction, sorted by places left.
-                foreach ($placesleftcopy as $choiceid => $placescount) {
-                    $choicessortedbygroupcount[$choiceid] = $placescount;
-                }
-
-                foreach (array_keys($choicessortedbygroupcount) as $choiceid) {
-                    // We now handle the choice with the least count of groups first.
-                    // First get all users which can rate the current choice.
-                    $possibleusers = $this->get_possible_users_for_choices()[$choiceid];
-
-                    while($placesleft[$choiceid] > 0) {
-                        $nextuser = array_shift($possibleusers);
-                        if (!$nextuser) {
-                            continue 2;
-                        }
-                        $this->add_allocation($choiceid, $nextuser);
-                        $placesleft[$choiceid] = $placesleft[$choiceid] - 1;
-                        unset($undistributeduserids[array_search($nextuser, $undistributeduserids)]);
-                    }
-                }
+        // Filter choices the user cannot be assigned to.
+        foreach (array_keys($placesleft) as $choiceid) {
+            $choice = $DB->get_record('ratingallocate_choices', ['id' => $choiceid]);
+            if (empty($choice->usegroups)) {
+                // If we have a group without group restrictions it will always be available.
+                continue;
             }
-        $transaction->allow_commit();
+            if (empty($this->get_choice_groups($choiceid))) {
+                // If we have a group with group restrictions enabled, but without groups defined, no user
+                // can ever be assigned, so remove it.
+                unset($placesleft[$choiceid]);
+                continue;
+            }
+            // So only choices with 'proper' group restrictions are left now.
+            $groupidsofcurrentchoice = array_map(fn($group) => $group->id, $this->get_choice_groups($choiceid));
+            $intersectinggroupids = array_intersect($this->get_user_groupids($userid), $groupidsofcurrentchoice);
+            if (empty($intersectinggroupids)) {
+                // If the user is not in one of the groups of the current choice, we remove the choice from possibles choices.
+                unset($placesleft[$choiceid]);
+            }
+        }
+
+        // At this point $placesleft only contains choices the user can be assigned to.
+        if (empty($placesleft)) {
+            // If we have no choice to assign, we return -1 to signal the algorithm that we cannot assign the user.
+            return -1;
+        }
+
+        // We now have to decide which choice id will be returned as the one the user will be assigned to.
+        // In case of "equal distribution" we have to fake the amount of available places first.
+        if ($distributionalgorithm == ACTION_DISTRIBUTE_UNALLOCATED_EQUALLY) {
+            $userstodistributecount = count($this->get_undistributed_users());
+            $freeplacescount = array_reduce($placesleft, fn($a, $b) => $a + $b);
+
+            $freeplacesoverhang = $freeplacescount - $userstodistributecount;
+
+            if ($freeplacesoverhang > 0) {
+                // Only if there are more free places than users to distribute, we want to distribute "equally".
+                // Choices with more places left should be targeted first when reducing places left.
+                arsort($placesleft);
+                $i = 0;
+                $choicesmaxed = [];
+                // We now lower each count of available places in each choice for every additional place that we have altogether
+                // than users to still distribute.
+                while ($freeplacesoverhang > 0 && count(array_unique($choicesmaxed)) < count($placesleft)) {
+                    // Second condition means that we will stop if we failed trying to reduce *every* choice.
+                    $nextchoiceid = array_keys($placesleft)[$i];
+                    if ($placesleft[$nextchoiceid] > 0) {
+                        // If we can still lower it, we do it.
+                        $placesleft[$nextchoiceid] = $placesleft[$nextchoiceid] - 1;
+                        $freeplacesoverhang--;
+                    } else {
+                        // If we cannot lower the places left anymore for this choice, we track that and will try to lower the
+                        // available places for the next one instead.
+                        $choicesmaxed[] = $nextchoiceid;
+                    }
+                    $i++;
+                    // We are iterating over all the choices constantly and try to reduce the available places.
+                    $i = $i % count($placesleft);
+                }
+                // We recalculated the left places for each choice, so we have to remove the choices which are now maxed out.
+                $placesleft = array_filter($placesleft, fn($numberoffreeplaces) => $numberoffreeplaces != 0);
+            }
+        }
+
+        // From here on it's just the algorithm 'distribute by filling up'.
+        $possiblechoices = $placesleft;
+
+        $choicessortedwithgroupscount = [];
+        $choicessorted = [];
+        foreach (array_keys($possiblechoices) as $choiceid) {
+            $choicessortedwithgroupscount[count($this->get_choice_groups($choiceid))][] = $choiceid;
+        }
+        foreach ($choicessortedwithgroupscount as &$choiceswithcertaingroupcount) {
+            usort($choiceswithcertaingroupcount, function($a, $b) use ($placesleft) {
+                // Choices with the same amount of groups are sorted according the count of left places: fewer places first.
+                return $placesleft[$a] - $placesleft[$b];
+            });
+        }
+        for ($i = 1; $i <= max(array_keys($choicessortedwithgroupscount)); $i++) {
+            if (empty($choicessortedwithgroupscount[$i])) {
+                continue;
+            }
+            $choicessorted = array_merge($choicessorted, $choicessortedwithgroupscount[$i]);
+        }
+        if (!empty($choicessortedwithgroupscount)) {
+            $choicessorted = array_merge($choicessorted, $choicessortedwithgroupscount[0]);
+        }
+
+        // This is kind of a dilemma. We want the choices to be filled up beginning at the one with the least places left to fill it
+        // up as quickly as possible.
+        // However, in case of group restrictions this will lead to problems as we are assigning users which have to be assigned to
+        // specific choices (because all others cannot be assigned to it). So in the end these choices will not be available when
+        // we arrive at the choice with the group restrictions.
+        // Therefore, we are first filling up choices with group restrictions first (beginning at choices with fewer groups). Only
+        // in case we have the same amount of groups for two choices or we have no group restrictions at all we pick choices with
+        // fewer places left first (see foreach loop with usort a few lines above).
+
+        return !empty($choicessorted) ? array_shift($choicessorted) : -1;
     }
 
     /**
-     * Helper function to retrieve all users who can rate the given choice due to group restrictions.
+     * Try to distribute all currently unallocated users.
      *
-     * This function sorts the users dependent on the fact how many groups they are member in. Users with less groups
-     * than others come first.
-     *
-     * @param int $choiceid
-     * @return array $users array of users, sorted from 'has less groups' to 'has more groups'
+     * @param string $distributionalgorithm the distributionalgorithm which should be used, you can choose between
+     *  ACTION_DISTRIBUTE_UNALLOCATED_EQUALLY and ACTION_DISTRIBUTE_UNALLOCATED_FILL
+     * @return void
+     * @throws dml_exception
      */
-    private function filter_userids_who_can_rate_choice(array $userids, int $choiceid): array {
-        $choicesfiltered = array_filter($this->get_rateable_choices(), fn($choice) => $choice->id == $choiceid);
-        if (empty($choicesfiltered)) {
-            // We could not find the choice with the given id.
-            return [];
-        }
-        $choice = array_values($choicesfiltered)[0];
+    public function distribute_users_without_choice(string $distributionalgorithm): void {
 
-        // If we have a choice without group mode, return all possible users.
-        if (!$choice->usegroups) {
-            return $userids;
-        }
-        // If we have a choice with group mode, but without any specified groups, no user can be distributed to this choice.
-        if (empty($this->get_choice_groups($choice->id))) {
-            return [];
-        }
+        // This will retrieve a list of users we are trying to assign to choices, sorted from the least group membership count to
+        // more group memberships. Users without group memberships will be at the end of the array.
+        $possibleusers = $this->get_undistributed_users();
 
-        // In all other cases: Filter users by their groups.
-        $filtereduserids = array_filter($userids,
-            function($userid) use ($choiceid) {
-                $isselectable = false;
-                foreach ($this->get_choice_groups($choiceid) as $group) {
-                    if (groups_is_member($group->id, $userid)) {
-                        $isselectable = true;
-                        break;
-                    }
-                }
-                return $isselectable;
-            });
-        return $filtereduserids;
+        $transaction = $this->db->start_delegated_transaction();
+
+        $usertoassign = array_shift($possibleusers);
+        // As long as we have a user to assign, we try to assign him.
+        while ($usertoassign != null) {
+
+            // Calculate the choice to assign the user to depending on the given algorithm.
+            $choicetoassign = $this->get_next_choice_to_assign_user($distributionalgorithm, $usertoassign);
+            if ($choicetoassign == -1) {
+                // If the function returns -1 that means that the user could not be assigned, so we try the next one.
+                $usertoassign = array_shift($possibleusers);
+                continue;
+            }
+            $this->add_allocation($choicetoassign, $usertoassign);
+            $usertoassign = array_shift($possibleusers);
+        }
+        // At this point we tried to assign all the users. It is possible that users remain undistributed, though.
+
+        $transaction->allow_commit();
     }
 
     private function process_action_show_ratings_and_alloc_table() {
@@ -1740,9 +1766,11 @@ class ratingallocate {
 
     /**
      * Remove all allocations of a user.
+     *
      * @param int $userid id of the user.
      */
-    public function remove_allocations($userid) {
+    public
+    function remove_allocations($userid) {
         $this->db->delete_records('ratingallocate_allocations', array(
             'userid' => $userid,
             'ratingallocateid' => $this->ratingallocateid
@@ -2005,7 +2033,6 @@ class ratingallocate {
         }
         return true;
     }
-
 
     /**
      * @param int choiceid
