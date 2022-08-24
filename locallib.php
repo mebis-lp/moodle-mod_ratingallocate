@@ -728,14 +728,15 @@ class ratingallocate {
                 // If we have a group without group restrictions it will always be available.
                 continue;
             }
-            if (empty($this->get_choice_groups($choiceid))) {
+            $choicegroups = $this->get_choice_groups($choiceid);
+            if (empty($choicegroups)) {
                 // If we have a group with group restrictions enabled, but without groups defined, no user
                 // can ever be assigned, so remove it.
                 unset($placesleft[$choiceid]);
                 continue;
             }
             // So only choices with 'proper' group restrictions are left now.
-            $groupidsofcurrentchoice = array_map(fn($group) => $group->id, $this->get_choice_groups($choiceid));
+            $groupidsofcurrentchoice = array_map(fn($group) => $group->id, $choicegroups);
             $intersectinggroupids = array_intersect($this->get_user_groupids($userid), $groupidsofcurrentchoice);
             if (empty($intersectinggroupids)) {
                 // If the user is not in one of the groups of the current choice, we remove the choice from possibles choices.
