@@ -52,8 +52,8 @@
     background: url('[[pix:ratingallocate|checkbox]]');
     background-size: 13px 13px;
 }
-.ratingallocate_ratings_table span input[type=radio] {
-    display: none !important;
+#page-mod-ratingallocate-view .ratingallocate_ratings_table span input[type=radio] {
+    display: none;
 }
 
 .ratingallocate_ratings_box {
