@@ -142,15 +142,14 @@ class mod_ratingallocate_mod_form extends moodleform_mod {
     /**
      * Add an settings element to the form. It is enabled only if the strategy it belongs to is selected.
      * @param string $stratfieldid id of the element to be added
-     * @param array $value array with the element type and its caption 
+     * @param array $value array with the element type and its caption
      *        (usually returned by the strategys get settingsfields methods).
      * @param string $strategyid id of the strategy it belongs to.
      * @param $mform MoodleQuickForm form object the settings field should be added to.
      */
     private function add_settings_field($stratfieldid, array $value, $strategyid, MoodleQuickForm $mform) {
 
-        $attributes = array('size' => '20');
-
+        $attributes = [];
         if ($value[0] != "select" && isset($value[3])) {
             $attributes['placeholder'] = ($value[3]);
         }
