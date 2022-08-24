@@ -806,7 +806,7 @@ class ratingallocate {
             }
             $choicessorted = array_merge($choicessorted, $choicessortedwithgroupscount[$i]);
         }
-        if (!empty($choicessortedwithgroupscount)) {
+        if (!empty($choicessortedwithgroupscount[0])) {
             $choicessorted = array_merge($choicessorted, $choicessortedwithgroupscount[0]);
         }
 
