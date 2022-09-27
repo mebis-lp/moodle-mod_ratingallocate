@@ -668,8 +668,10 @@ class ratingallocate {
      * @return array Associative array [groupcount => [ users ]]
      */
     private function get_undistributed_users_with_groupscount(): array {
-        $undistributedusers = array_map(fn($user) => $user->id, array_values(array_filter($this->get_raters_in_course(),
-            fn($user) => !in_array($user->id, array_keys($this->get_allocations())))));
+        $cachedallocations = $this->get_allocations();
+        $raters = $this->get_raters_in_course();
+        $undistributedusers = array_map(fn($user) => $user->id, array_values(array_filter($raters,
+            fn($user) => !in_array($user->id, array_keys($cachedallocations)))));
 
         $undistributeduserswithgroups = [];
         foreach ($undistributedusers as $user) {
@@ -713,9 +715,15 @@ class ratingallocate {
         global $DB;
 
         $placesleft = [];
+        // Due to performance reasons we need to save some database query results to avoid multiple inefficient queries.
+        $cachedusergroupids = $this->get_user_groupids($userid);
+        $cachedundistributedusers = $this->get_undistributed_users();
+        $cachedallocations = $this->get_allocations();
+        $cachedchoices = [];
         foreach ($this->get_rateable_choices() as $choice) {
+            $cachedchoices[$choice->id] = $choice;
             $placesleft[$choice->id] = $choice->maxsize -
-                count(array_filter($this->get_allocations(), fn($allocation) => $allocation->choiceid == $choice->id));
+                count(array_filter($cachedallocations, fn($allocation) => $allocation->choiceid == $choice->id));
         }
 
         // We have to remove the choices which are already maxed out.
@@ -737,7 +745,7 @@ class ratingallocate {
             }
             // So only choices with 'proper' group restrictions are left now.
             $groupidsofcurrentchoice = array_map(fn($group) => $group->id, $choicegroups);
-            $intersectinggroupids = array_intersect($this->get_user_groupids($userid), $groupidsofcurrentchoice);
+            $intersectinggroupids = array_intersect($cachedusergroupids, $groupidsofcurrentchoice);
             if (empty($intersectinggroupids)) {
                 // If the user is not in one of the groups of the current choice, we remove the choice from possibles choices.
                 unset($placesleft[$choiceid]);
@@ -753,7 +761,7 @@ class ratingallocate {
         // We now have to decide which choice id will be returned as the one the user will be assigned to.
         // In case of "equal distribution" we have to fake the amount of available places first.
         if ($distributionalgorithm == ACTION_DISTRIBUTE_UNALLOCATED_EQUALLY) {
-            $userstodistributecount = count($this->get_undistributed_users());
+            $userstodistributecount = count($cachedundistributedusers);
             $freeplacescount = array_reduce($placesleft, fn($a, $b) => $a + $b);
 
             $freeplacesoverhang = $freeplacescount - $userstodistributecount;
