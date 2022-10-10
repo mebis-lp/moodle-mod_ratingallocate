@@ -849,13 +849,13 @@ class ratingallocate {
         $tasksofthisinstance = array_filter(manager::get_adhoc_tasks('\mod_ratingallocate\task\distribute_unallocated_task'), function ($task) {
             return $task->get_custom_data()->ratingallocateid == $this->ratingallocateid;
         });
-        if (count($tasksofthisinstance) > 0) {
+        if (!empty($tasksofthisinstance)) {
             return false;
         }
         $distributeunallocatedtask = new \mod_ratingallocate\task\distribute_unallocated_task();
         $distributeunallocatedtask->set_custom_data(['ratingallocateid' => $this->ratingallocateid, 'action' => $distributionalgorithm]);
         // We already checked if we do not trigger the task if another task with the same ratingallocateid is running, but
-        // checkforexisting' makes it extra safe.
+        // 'checkforexisting' makes it extra safe.
         return manager::queue_adhoc_task($distributeunallocatedtask, true);
     }
 
