@@ -14,6 +14,8 @@
 // You should have received a copy of the GNU General Public License
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
+use core\task\manager;
+
 defined('MOODLE_INTERNAL') || die();
 require_once(__DIR__ . '/generator/lib.php');
 require_once(__DIR__ . '/../locallib.php');
@@ -320,6 +322,52 @@ class mod_ratingallocate_allocate_unrated_test extends advanced_testcase {
     }
 
     /**
+     * Test if adhoc task being run twice properly blocks itself.
+     */
+    public function test_blocking_of_adhoc_task(): void {
+        $choices = [];
+
+        $letters = range('A', 'E');
+        foreach ($letters as $letter) {
+            $choice = [
+                'title' => "$letter",
+                'explanation' => "Explain Choice $letter",
+                'maxsize' => 8,
+                'active' => true,
+                'usegroups' => false
+            ];
+            $choices[] = $choice;
+        }
+        $mod = mod_ratingallocate_generator::create_instance_with_choices($this,
+            ['course' => $this->course,
+                'strategyopt' => ['countoptions' => 3],
+                'strategy' => 'strategy_order'],
+            $choices);
+        $this->ratingallocate = mod_ratingallocate_generator::get_ratingallocate_for_user($this, $mod, $this->teacher);
+
+        $this->assertTrue($this->ratingallocate->run_distribution_of_users_without_choice(
+            ACTION_DISTRIBUTE_UNALLOCATED_EQUALLY));
+        $this->assertFalse($this->ratingallocate->run_distribution_of_users_without_choice(
+            ACTION_DISTRIBUTE_UNALLOCATED_FILL));
+        // Despite calling function twice, there should only be the first task.
+        $this->assertCount(1,
+            manager::get_adhoc_tasks('\mod_ratingallocate\task\distribute_unallocated_task'));
+
+        ob_start();
+        $this->runAdhocTasks();
+        $output = ob_get_clean();
+
+        // We doublecheck if it's really the first one which has been run.
+        $this->assertStringContainsString(
+            'Distribution of users successful with algorithm type ' . ACTION_DISTRIBUTE_UNALLOCATED_EQUALLY, $output);
+
+        // Just to be double sure. This should be result of ACTION_DISTRIBUTE_UNALLOCATED_EQUALLY.
+        foreach (range('A', 'E') as $groupname) {
+            $this->assertEquals(8, $this->get_allocation_count_for_choice($groupname));
+        }
+    }
+
+    /**
      * Test distribution without groups.
      *
      * @return void
@@ -350,7 +398,10 @@ class mod_ratingallocate_allocate_unrated_test extends advanced_testcase {
         $this->ratingallocate->add_allocation($this->get_choice_id_by_title('A'), $this->studentsnogroup[0]->id);
         $this->ratingallocate->add_allocation($this->get_choice_id_by_title('A'), $this->studentsnogroup[1]->id);
         $this->assertEquals(2, $this->get_allocation_count_for_choice('A'));
-        $this->ratingallocate->distribute_users_without_choice(ACTION_DISTRIBUTE_UNALLOCATED_EQUALLY);
+        $this->ratingallocate->run_distribution_of_users_without_choice(ACTION_DISTRIBUTE_UNALLOCATED_EQUALLY);
+        ob_start();
+        $this->runAdhocTasks();
+        ob_end_clean();
         foreach (range('A', 'E') as $groupname) {
             $this->assertEquals(8, $this->get_allocation_count_for_choice($groupname));
         }
@@ -363,7 +414,10 @@ class mod_ratingallocate_allocate_unrated_test extends advanced_testcase {
             mod_ratingallocate_generator::create_user_and_enrol($this, $this->course);
         }
         $this->assertEquals(51, count(enrol_get_course_users($this->course->id)));
-        $this->ratingallocate->distribute_users_without_choice(ACTION_DISTRIBUTE_UNALLOCATED_EQUALLY);
+        $this->ratingallocate->run_distribution_of_users_without_choice(ACTION_DISTRIBUTE_UNALLOCATED_EQUALLY);
+        ob_start();
+        $this->runAdhocTasks();
+        ob_end_clean();
         foreach (range('A', 'E') as $choicetitle) {
             // We still should have the maximum amount of students assigned to the choices.
             $this->assertEquals(8, $this->get_allocation_count_for_choice($choicetitle));
@@ -415,7 +469,10 @@ class mod_ratingallocate_allocate_unrated_test extends advanced_testcase {
         $this->ratingallocate = mod_ratingallocate_generator::get_ratingallocate_for_user($this, $mod, $this->teacher);
         // Assign blue and green group to choice D. So D is only available to green and blue students.
         $this->ratingallocate->update_choice_groups($this->get_choice_id_by_title('D'), [$this->blue->id, $this->green->id]);
-        $this->ratingallocate->distribute_users_without_choice($algorithm);
+        $this->ratingallocate->run_distribution_of_users_without_choice($algorithm);
+        ob_start();
+        $this->runAdhocTasks();
+        ob_end_clean();
         // We could not distribute all users, but choices 'A' to 'D' should be properly filled.
         foreach (range('A', 'D') as $choicetitle) {
             $this->assertEquals(8, $this->get_allocation_count_for_choice($choicetitle));
@@ -433,7 +490,10 @@ class mod_ratingallocate_allocate_unrated_test extends advanced_testcase {
         // We now assign a group to E, so all users should be distributed, because we got 40 places in total for 40 students.
         $this->ratingallocate->clear_all_allocations();
         $this->ratingallocate->update_choice_groups($this->get_choice_id_by_title('E'), [$this->red->id]);
-        $this->ratingallocate->distribute_users_without_choice($algorithm);
+        $this->ratingallocate->run_distribution_of_users_without_choice($algorithm);
+        ob_start();
+        $this->runAdhocTasks();
+        ob_end_clean();
         foreach (range('A', 'E') as $groupname) {
             $this->assertEquals(8, $this->get_allocation_count_for_choice($groupname));
         }
@@ -477,7 +537,10 @@ class mod_ratingallocate_allocate_unrated_test extends advanced_testcase {
             $newusers[] = mod_ratingallocate_generator::create_user_and_enrol($this, $this->course);
         }
         $this->assertEquals(51, count(enrol_get_course_users($this->course->id)));
-        $this->ratingallocate->distribute_users_without_choice($algorithm);
+        $this->ratingallocate->run_distribution_of_users_without_choice($algorithm);
+        ob_start();
+        $this->runAdhocTasks();
+        ob_end_clean();
         foreach (range('A', 'E') as $choicetitle) {
             // We still should have the maximum amount of students assigned to the choices.
             $this->assertEquals(8, $this->get_allocation_count_for_choice($choicetitle));
@@ -523,7 +586,10 @@ class mod_ratingallocate_allocate_unrated_test extends advanced_testcase {
         // Randomly manually allocate some students to some choices to see if the algorithm can deal with that.
         $this->allocate_random_users();
 
-        $this->ratingallocate->distribute_users_without_choice(ACTION_DISTRIBUTE_UNALLOCATED_EQUALLY);
+        $this->ratingallocate->run_distribution_of_users_without_choice(ACTION_DISTRIBUTE_UNALLOCATED_EQUALLY);
+        ob_start();
+        $this->runAdhocTasks();
+        ob_end_clean();
         $i = 14;
         foreach ($letters as $groupname) {
             // All choices should be equally filled up. We have 50 places and 40 users, so every choice should have 2 places left
@@ -571,7 +637,10 @@ class mod_ratingallocate_allocate_unrated_test extends advanced_testcase {
         // Randomly manually allocate some students to some choices to see if the algorithm can deal with that.
         $this->allocate_random_users();
 
-        $this->ratingallocate->distribute_users_without_choice(ACTION_DISTRIBUTE_UNALLOCATED_FILL);
+        $this->ratingallocate->run_distribution_of_users_without_choice(ACTION_DISTRIBUTE_UNALLOCATED_FILL);
+        ob_start();
+        $this->runAdhocTasks();
+        ob_end_clean();
 
         $i = 14;
         foreach ($letters as $groupname) {

@@ -26,6 +26,8 @@
  * @license http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 defined('MOODLE_INTERNAL') || die();
+
+use core\task\manager;
 use ratingallocate\db as this_db;
 
 global $CFG;
@@ -832,6 +834,32 @@ class ratingallocate {
     }
 
     /**
+     * Starts the distribution of users without choice as adhoc task.
+     *
+     * @param string $distributionalgorithm The distribution algorithm which should be used
+     * @return bool true if adhoc task has been queued properly, else false
+     */
+    public function run_distribution_of_users_without_choice(string $distributionalgorithm): bool {
+        if ($distributionalgorithm !== ACTION_DISTRIBUTE_UNALLOCATED_EQUALLY && $distributionalgorithm !== ACTION_DISTRIBUTE_UNALLOCATED_FILL) {
+            return false;
+        }
+        // We need to use our own lock implementation (instead of using 'checkforexisting' of \core\task\manager::queue_adhoc_task),
+        // because 'checkforexisting' does not handle the case of different users triggering the algorithm for the same
+        // ratingallocate module.
+        $tasksofthisinstance = array_filter(manager::get_adhoc_tasks('\mod_ratingallocate\task\distribute_unallocated_task'), function ($task) {
+            return $task->get_custom_data()->ratingallocateid == $this->ratingallocateid;
+        });
+        if (!empty($tasksofthisinstance)) {
+            return false;
+        }
+        $distributeunallocatedtask = new \mod_ratingallocate\task\distribute_unallocated_task();
+        $distributeunallocatedtask->set_custom_data(['ratingallocateid' => $this->ratingallocateid, 'action' => $distributionalgorithm]);
+        // We already checked if we do not trigger the task if another task with the same ratingallocateid is running, but
+        // 'checkforexisting' makes it extra safe.
+        return manager::queue_adhoc_task($distributeunallocatedtask, true);
+    }
+
+    /**
      * Try to distribute all currently unallocated users.
      *
      * @param string $distributionalgorithm the distributionalgorithm which should be used, you can choose between
@@ -1084,12 +1112,15 @@ class ratingallocate {
 
             case ACTION_DISTRIBUTE_UNALLOCATED_EQUALLY:
             case ACTION_DISTRIBUTE_UNALLOCATED_FILL:
-                $this->distribute_users_without_choice($action);
+                $result = $this->run_distribution_of_users_without_choice($action);
+                $message = $result ? get_string('unassigned_users_will_be_assigned', ratingallocate_MOD_NAME)
+                    : get_string('unassigned_users_algorithm_already_running', ratingallocate_MOD_NAME);
+                $type = $result ? \core\output\notification::NOTIFY_SUCCESS : \core\output\notification::NOTIFY_ERROR;
                 redirect(new moodle_url('/mod/ratingallocate/view.php',
                             ['id' => $this->coursemodule->id, 'action' => ACTION_NONE]),
-                    get_string('unassigned_users_assigned', ratingallocate_MOD_NAME),
+                    $message,
                     null,
-                    \core\output\notification::NOTIFY_SUCCESS);
+                    $type);
                 break;
 
             case ACTION_SHOW_RATINGS_AND_ALLOCATION_TABLE:
