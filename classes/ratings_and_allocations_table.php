@@ -75,9 +75,10 @@ class ratings_and_allocations_table extends \table_sql {
         $this->renderer = $renderer;
         $this->titles   = $titles;
         $this->ratingallocate = $ratingallocate;
+        $allgroupsofchoices = $this->ratingallocate->get_all_groups_of_choices();
         $this->groupsofallchoices = array_map(function($groupid) {
             return groups_get_group($groupid);
-        }, $this->ratingallocate->get_all_groups_of_choices());
+        }, $allgroupsofchoices);
         if ($downloadable && has_capability('mod/ratingallocate:export_ratings', $ratingallocate->get_context())) {
             $download = optional_param('download', '', PARAM_ALPHA);
             $this->is_downloading($download, 'Test', 'Testsheet');
@@ -85,7 +86,7 @@ class ratings_and_allocations_table extends \table_sql {
 
         $this->shownames = true;
         // We only show the group column if at least one group is being used in at least one active restriction setting of a choice.
-        $this->showgroups = !empty($this->ratingallocate->get_all_groups_of_choices());
+        $this->showgroups = !empty($allgroupsofchoices);
     }
 
     /**
