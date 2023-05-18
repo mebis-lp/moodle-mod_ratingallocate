@@ -218,5 +218,18 @@ function xmldb_ratingallocate_upgrade($oldversion) {
         upgrade_mod_savepoint(true, 2023050900, 'ratingallocate');
     }
 
+    if ($oldversion < 2023062001) {
+        // Due to a bug in the group restriction feature there are orphaned group assignments to choices
+        // that already have been deleted. This bug has been fixed, but we need to cleanup the table once.
+        // So we have to delete every group assignment without corresponding choice.
+        $sql = "SELECT g.id FROM {ratingallocate_group_choices} g LEFT JOIN {ratingallocate_choices} c ON g.choiceid = c.id"
+            . " WHERE c.id IS NULL";
+        $idstodelete = $DB->get_fieldset_sql($sql);
+        $DB->delete_records_list('ratingallocate_group_choices', 'id', $idstodelete);
+
+        // Ratingallocate savepoint reached.
+        upgrade_mod_savepoint(true, 2023062001, 'ratingallocate');
+    }
+
     return true;
 }
